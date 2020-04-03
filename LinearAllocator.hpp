@@ -1,6 +1,7 @@
 #include <vector>
 #include <cstdlib>
 #include <cstdint>
+#include <cassert>
 
 #include "IAllocator.hpp"
 #include "IAllocatorTraits.hpp"
@@ -25,6 +26,25 @@ namespace std_allocators
 	};	
 
 	template<typename T>
+	LinearAllocator<T>::LinearAllocator()
+	{
+
+	}
+	
+	template<typename T>	
+	LinearAllocator<T>::LinearAllocator(const LinearAllocator& other)
+	{
+
+	}
+	
+	template<typename T>	
+	template<typename U>
+	LinearAllocator<T>::LinearAllocator(const LinearAllocator<U>& other)
+	{
+	
+	}
+
+	template<typename T>
 	typename LinearAllocator<T>::pointer LinearAllocator<T>::allocateImpl(size_t count_objects)
 	{
 		if (count_objects == 0u)
@@ -36,8 +56,8 @@ namespace std_allocators
 	template<typename T>
 	void LinearAllocator<T>::deallocateImpl(pointer memory_pointer, size_t count_objects)
 	{
-		if ( (memory_pointer == nullptr) || (count_objects == 0u) )
-			return;
+		assert("Linear allocator does not support this operation." \
+			   "You can use another type of the allocator for these purposes.");
 	}
 
 }
