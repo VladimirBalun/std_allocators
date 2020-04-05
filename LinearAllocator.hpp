@@ -13,9 +13,11 @@ namespace std_allocators
 	class LinearAllocator : public IAllocator<LinearAllocator<T>>
 	{
 	public:
-        using value_type    = typename details::IAllocatorTraits<T>::value_type;
-		using pointer       = typename details::IAllocatorTraits<T>::pointer;
-		using const_pointer = typename details::IAllocatorTraits<T>::const_pointer;
+        using value_type      = typename details::IAllocatorTraits<T>::value_type;
+		using pointer         = typename details::IAllocatorTraits<T>::pointer;
+		using const_pointer   = typename details::IAllocatorTraits<T>::const_pointer;
+		using reference       = typename details::IAllocatorTraits<T>::reference;
+		using const_reference = typename details::IAllocatorTraits<T>::const_reference;
 	public:
 		LinearAllocator();
 		LinearAllocator(const LinearAllocator& other);
