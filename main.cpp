@@ -4,6 +4,9 @@
 #include <array>
 #include <algorithm>
 #include <set>
+#include <list>
+#include <map>
+#include <utility>
 
 namespace details
 {
@@ -20,7 +23,7 @@ namespace details
         std::vector<std::uint8_t> data{};
     };
 
-    template<std::size_t CHUNK_SIZE, typename ContainerType>
+    template<std::size_t CHUNK_SIZE, class Container>
     class Chunk
     {
         static constexpr std::size_t HEADER_SIZE = 4u;
@@ -29,14 +32,14 @@ namespace details
         {
             std::uint32_t* init_header = reinterpret_cast<std::uint32_t*>(m_blocks.data.data());
             *init_header = m_max_block_size;
-            m_free_blocks.insert(reinterpret_cast<std::uint32_t*>(m_blocks.data.data()));
+            m_free_blocks.insert(init_header);
         }
         
-        bool isInside(const std::uint8_t* address) const
+        bool isInside(const std::uint8_t* address) const noexcept
         {
             const std::uint8_t* start_chunk_address = m_blocks.data.data();
             const std::uint8_t* end_chunk_address = start_chunk_address + CHUNK_SIZE;
-            return (start_chunk_address >= address) && (address < end_chunk_address);
+            return (start_chunk_address <= address) && (address < end_chunk_address);
         }
         
         std::uint8_t* tryReserveBlock(std::size_t allocation_size)
@@ -46,58 +49,66 @@ namespace details
                 return nullptr;
             }
             
-            assert(!m_free_blocks.empty() && "Internal logic error with reserve blocks");
             const auto it = std::min_element(m_free_blocks.cbegin(), m_free_blocks.cend(), [] (std::uint32_t* lhs, std::uint32_t* rhs)
             {
                 return (*lhs) < (*rhs);
             });
             
+            assert(it != m_free_blocks.cend() && "Internal logic error with reserve block");
+            
             std::uint32_t* header_address = *it;
-            const std::uint32_t old_block_size = *header_address;
-            *header_address = static_cast<std::uint32_t>(allocation_size);
-            std::uint32_t* new_header_address = header_address + allocation_size;
+            std::uint32_t* new_header_address =
+                reinterpret_cast<std::uint32_t*>(reinterpret_cast<std::uint8_t*>(header_address) + HEADER_SIZE + allocation_size);
             if (m_free_blocks.find(new_header_address) == m_free_blocks.cend())
             {
-                *new_header_address = old_block_size - static_cast<std::uint32_t>(allocation_size) - HEADER_SIZE; // TODO
+                const std::uint32_t old_block_size = *header_address;
+                const std::uint32_t new_block_size = old_block_size - static_cast<std::uint32_t>(allocation_size) - HEADER_SIZE; // TODO
+                *new_header_address = new_block_size;
                 m_free_blocks.insert(new_header_address);
             }
             
-            return reinterpret_cast<std::uint8_t*>(header_address + 1u);
+            m_free_blocks.erase(header_address);
+            *header_address = static_cast<std::uint32_t>(allocation_size);
+            std::uint8_t* allocated_block = reinterpret_cast<std::uint8_t*>(header_address) + HEADER_SIZE;
+            return allocated_block;
         }
         
         void relizeBlock(std::uint8_t* block_ptr)
         {
-            m_free_blocks.insert(reinterpret_cast<std::uint32_t*>(block_ptr));
+            std::uint8_t* header_address = block_ptr - HEADER_SIZE;
+            m_free_blocks.insert(reinterpret_cast<std::uint32_t*>(header_address));
         }
         
         void defragment()
         {
-            if (m_free_blocks.size() > 1u)
+            if (m_free_blocks.size() < 2u)
             {
-                auto next_it = m_free_blocks.cbegin();
-                auto current_it = next_it++;
-                while (next_it != m_free_blocks.cend())
+                return;
+            }
+            
+            std::uint32_t* prev_header_address = nullptr;
+            for (auto it = m_free_blocks.begin(); it != m_free_blocks.end(); ++it)
+            {
+                std::uint32_t* current_header_address = *it;
+                if (prev_header_address)
                 {
-                    std::uint32_t* current_header_address = *current_it;
-                    const std::uint32_t current_block_size = *current_header_address;
-                    const std::uint32_t* next_header_address = *next_it;
-                    if (current_header_address + current_block_size == next_header_address)
+                    const std::uint32_t prev_block_size = *prev_header_address;
+                    const std::uint32_t* available_current_block_address =
+                        reinterpret_cast<std::uint32_t*>(reinterpret_cast<std::uint8_t*>(prev_header_address) + HEADER_SIZE + prev_block_size);
+                    if (available_current_block_address == current_header_address)
                     {
-                        const std::uint32_t next_block_size = *next_header_address;
-                        *current_header_address = current_block_size + next_block_size + HEADER_SIZE;
-                        auto temp_it = next_it;
-                        ++next_it;
-                        m_free_blocks.erase(temp_it);
+                        const std::uint32_t current_block_size = *current_header_address;
+                        *prev_header_address = prev_block_size + HEADER_SIZE + current_block_size;
+                        it = m_free_blocks.erase(it);
                         continue;
                     }
-                    
-                    ++current_it;
-                    ++next_it;
                 }
+                
+                prev_header_address = current_header_address;
             }
         }
     private:
-        ContainerType m_blocks{};
+        Container m_blocks{};
         std::set<std::uint32_t*> m_free_blocks{};
         std::uint32_t m_max_block_size = CHUNK_SIZE - HEADER_SIZE;
     };
@@ -110,7 +121,7 @@ namespace details
 
  }
 
-template<template<size_t> class ChunkType, std::size_t CHUNK_SIZE = 4096>
+template<template<size_t> class Chunk, std::size_t CHUNK_SIZE = 16'384u>
 class CustomAllocationStrategy
 {
     static_assert(CHUNK_SIZE != 0u, "Chunk size must be more, than zero");
@@ -119,7 +130,7 @@ class CustomAllocationStrategy
 public:
     void* allocate(std::size_t size)
     {
-        assert(size <= CHUNK_SIZE && "Incorrect chunk size for future usage");
+        assert(size < CHUNK_SIZE && "Incorrect chunk size for future usage");
 
         if (size == 0u)
         {
@@ -128,7 +139,7 @@ public:
         
         for (auto& chunk : m_chunks)
         {
-            std::uint8_t* allocated_block = chunk.tryReserveBlock(size);
+            void* allocated_block = chunk.tryReserveBlock(size);
             if (allocated_block)
             {
                 return allocated_block;
@@ -160,7 +171,7 @@ public:
         }
     }
 private:
-    std::deque<ChunkType<CHUNK_SIZE>> m_chunks{ 1u };
+    std::deque<Chunk<CHUNK_SIZE>> m_chunks{ 1u };
 };
 
 template<typename T, class AllocationStrategy>
@@ -178,30 +189,33 @@ public:
 public:
     template<class U>
     struct rebind
-        {
-            using other = Allocator<U, AllocationStrategy>;
-        };
+    {
+        using other = Allocator<U, AllocationStrategy>;
+    };
 public:
     Allocator() = default;
     
-    Allocator(const Allocator& other)
+    explicit Allocator(AllocationStrategy& strategy) noexcept
+    : m_allocation_strategy(&strategy) {}
+    
+    Allocator(const Allocator& other) noexcept
         : m_allocation_strategy(other.m_allocation_strategy) {}
     
     template<typename U>
-    Allocator(const Allocator<U, AllocationStrategy>& other)
+    Allocator(const Allocator<U, AllocationStrategy>& other) noexcept
         : m_allocation_strategy(other.m_allocation_strategy)
     {
-        static_assert(std::is_convertible_v<T*, U*>, "Can not copy allocators: types are not convretible");
+        static_assert(std::is_convertible_v<T*, U*>, "Can not copy allocators: types are not convertible");
     }
     
     T* allocate(std::size_t count_objects)
     {
-        return static_cast<T*>(m_allocation_strategy.allocate(count_objects * sizeof(T)));
+        return static_cast<T*>(m_allocation_strategy->allocate(count_objects * sizeof(T)));
     }
     
     void deallocate(void* memory_ptr, std::size_t count_objects)
     {
-        m_allocation_strategy.deallocate(memory_ptr, count_objects * sizeof(T));
+        m_allocation_strategy->deallocate(memory_ptr, count_objects * sizeof(T));
     }
     
     template<typename U, typename... Args>
@@ -219,7 +233,7 @@ public:
         }
     }
 private:
-    AllocationStrategy m_allocation_strategy{};
+    AllocationStrategy* m_allocation_strategy = nullptr;
 };
 
 template<typename T>
@@ -234,16 +248,95 @@ using CustomAllocatorWithHeapChunks = Allocator<T, CustomAllocationStrategy<deta
 template<typename T>
 using custom_vector = std::vector<T, CustomAllocator<T>>;
 
+template<typename T>
+using custom_list = std::list<T, CustomAllocator<T>>;
+
+template<typename T>
+using custom_map = std::map<T, CustomAllocator<T>>;
+
+template<typename T>
+using custom_set = std::set<T, CustomAllocator<T>>;
+
+template<class Allocator>
+class custom_unique_ptr_creator;
+
+template<class Allocator>
+class custom_unique_ptr_deleter;
+
+template<typename T>
+using make_custom_unique = custom_unique_ptr_creator<CustomAllocator<T>>;
+
+template<typename T>
+using delete_custom_unique = custom_unique_ptr_deleter<CustomAllocator<T>>;
+
+template<typename T>
+using custom_unique_ptr = std::unique_ptr<T, delete_custom_unique<T>>;
+
+template<class Allocator>
+class custom_unique_ptr_creator
+{
+public:
+    using T = typename Allocator::value_type;
+    
+    custom_unique_ptr_creator() = default;
+    explicit custom_unique_ptr_creator(Allocator& allocator) noexcept
+        : m_allocator(&allocator) {}
+    
+    template<typename... Args>
+    custom_unique_ptr<T> operator()(Args&&... args)
+    {
+        if (m_allocator)
+        {
+            void* memory_block = m_allocator->allocate(1u);
+            delete_custom_unique<T> custom_deleter{ m_allocator };
+            return custom_unique_ptr<T>{ new (memory_block) T{ std::forward<Args>()... }, custom_deleter };
+        }
+
+        return nullptr;
+    }
+private:
+    Allocator* m_allocator;
+};
+
+template<class Allocator>
+class custom_unique_ptr_deleter
+{
+public:
+    using T = typename Allocator::value_type;
+    
+    explicit custom_unique_ptr_deleter(Allocator* allocator = nullptr) noexcept
+        : m_allocator(allocator) {}
+    
+    void operator()(T* ptr)
+    {
+        ptr->~T();
+        if (m_allocator)
+        {
+            m_allocator->deallocate(ptr, 1u);
+        }
+    }
+private:
+    Allocator* m_allocator;
+};
+
 int main(int argc, char** argv)
 {
-    CustomAllocator<int> custom_allocator{};
-    custom_vector<int> vector{ custom_allocator };
+    CustomAllocationStrategy<details::StackChunk> allocationStrategy{};
+    CustomAllocator<int> custom_allocator{ allocationStrategy };
+    
+    /*custom_vector<int> vector{ custom_allocator };
     for (int i = 0u; i < 1'000; ++i)
     {
         vector.push_back(i);
         std::cout << vector.at(i) << " ";
     }
-    vector.resize(16u);
+    vector.resize(16u);*/
+    
+    {
+        custom_unique_ptr<int> ptr = make_custom_unique<int>(custom_allocator)();
+    }
+    
+    
     return EXIT_SUCCESS;
 }
 
