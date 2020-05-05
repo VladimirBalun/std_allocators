@@ -406,6 +406,7 @@ int main(int argc, char** argv)
     custom_unique_ptr<int> ptr2 = make_custom_unique<int>(custom_int_allocator_copy)(500);
     custom_unique_ptr<int> ptr3 = make_custom_unique<int>(custom_int_allocator_copy)(1000);
     custom_unique_ptr<int> ptr4 = make_custom_unique<int>(custom_int_allocator_copy)(1500);
+    std::cout << *ptr1 << " " << *ptr2 << " " << *ptr3 << " " << *ptr4 << " ";
     
     CustomAllocator<float> custom_float_allocator { custom_int_allocator };
     custom_list<float> list{ { 10.0f, 11.0f, 12.0f, 13.0f, 14.0f, 15.0f }, custom_float_allocator };
