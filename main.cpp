@@ -31,13 +31,14 @@ namespace details
 
     // Current chunk implementation works only with size
     // aligned by 4 bytes, because HEADER_SIZE now also 4 bytes.
-    // You can modify it without problems for your purposes.
+    // You can modify it with HEADER_SIZE without problems for your purposes.
 
     template<std::size_t CHUNK_SIZE>
     class Chunk
     {
         static constexpr std::size_t HEADER_SIZE = 4u;
         static_assert(CHUNK_SIZE % HEADER_SIZE == 0, "CHUNK_SIZE must be multiple of the four");
+        static_assert(CHUNK_SIZE > HEADER_SIZE, "CHUNK_SIZE must be more than HEADER_SIZE");
     public:
         Chunk()
         {
