@@ -50,7 +50,7 @@ namespace details
         }
         
         bool isInside(const std::uint8_t* address) const noexcept
-         {
+        {
             const std::uint8_t* start_chunk_address = reinterpret_cast<const std::uint8_t*>(m_blocks.data());
             const std::uint8_t* end_chunk_address = start_chunk_address + CHUNK_SIZE;
             return (start_chunk_address <= address) && (address <= end_chunk_address);
@@ -165,7 +165,7 @@ namespace details
 
 }
 
-// Stategy for manipulation memory chuns, like
+// Strategy for manipulation memory chunks, like
 // a primitive malloc allocator.
 //
 // Warning: if you try to deallocate some random block
@@ -173,7 +173,7 @@ namespace details
 // because current implementation doesn't check this possible situation.
 
 template<std::size_t CHUNK_SIZE = 16'384u,
-    class MultitreadingPolicy = void,
+    class MultithreadingPolicy = void,
     class ErrorPolicy = void
 >
 class CustomAllocationStrategy
@@ -253,7 +253,7 @@ public:
     Allocator() = default;
     
     explicit Allocator(AllocationStrategy& strategy) noexcept
-    : m_allocation_strategy(&strategy) {}
+        : m_allocation_strategy(&strategy) {}
     
     Allocator(const Allocator& other) noexcept
         : m_allocation_strategy(other.m_allocation_strategy) {}
@@ -341,44 +341,25 @@ using custom_string = std::basic_string<char, std::char_traits<char>, CustomAllo
 template<typename T>
 using custom_unique_ptr = std::unique_ptr<T, std::function<void(T*)>>;
 
-template<class Allocator>
-class custom_unique_ptr_creator
+template<class Allocator, typename T = typename Allocator::value_type, typename... Args>
+custom_unique_ptr<T> make_custom_unique(Allocator allocator, Args&&... args)
 {
-public:
-    using T = typename Allocator::value_type;
-    
-    custom_unique_ptr_creator() = default;
-    explicit custom_unique_ptr_creator(Allocator& allocator) noexcept
-        : m_allocator(&allocator) {}
-    
-    template<typename... Args>
-    custom_unique_ptr<T> operator()(Args&&... args)
+    const auto custom_deleter = [allocator](T* ptr) mutable
     {
-        if (m_allocator)
-        {
-            const auto custom_deleter = [allocator = m_allocator](T* ptr) mutable
-            {
-                if (allocator)
-                {
-                    allocator->destroy(ptr);
-                    allocator->deallocate(ptr, 1u);
-                }
-            };
-            
-            void* memory_block = m_allocator->allocate(1u);
-            T* object_block = static_cast<T*>(memory_block);
-            m_allocator->construct(object_block, std::forward<Args>(args)...);
-            return custom_unique_ptr<T>{ object_block, custom_deleter };
-        }
-
-        return nullptr;
+        allocator.destroy(ptr);
+        allocator.deallocate(ptr, 1u);
+    };
+        
+    void* memory_block = allocator.allocate(1u);
+    if (memory_block)
+    {
+        T* object_block = static_cast<T*>(memory_block);
+        allocator.construct(object_block, std::forward<Args>(args)...);
+        return custom_unique_ptr<T>{ object_block, custom_deleter };
     }
-private:
-    Allocator* m_allocator = nullptr;
-};
 
-template<typename T>
-using make_custom_unique = custom_unique_ptr_creator<CustomAllocator<T>>;
+    return nullptr;
+}
 
 // ----------------------------------------------------------------------------------------------------------
 // -------------------------------- < usage example later > -------------------------------------------------
@@ -403,10 +384,10 @@ int main(int argc, char** argv)
     }
 
     CustomAllocator<int> custom_int_allocator_copy = vector.get_allocator();
-    custom_unique_ptr<int> ptr1 = make_custom_unique<int>(custom_int_allocator_copy)(100);
-    custom_unique_ptr<int> ptr2 = make_custom_unique<int>(custom_int_allocator_copy)(500);
-    custom_unique_ptr<int> ptr3 = make_custom_unique<int>(custom_int_allocator_copy)(1000);
-    custom_unique_ptr<int> ptr4 = make_custom_unique<int>(custom_int_allocator_copy)(1500);
+    custom_unique_ptr<int> ptr1 = make_custom_unique<CustomAllocator<int>>(custom_int_allocator_copy, 100);
+    custom_unique_ptr<int> ptr2 = make_custom_unique<CustomAllocator<int>>(custom_int_allocator_copy, 500);
+    custom_unique_ptr<int> ptr3 = make_custom_unique<CustomAllocator<int>>(custom_int_allocator_copy, 1000);
+    custom_unique_ptr<int> ptr4 = make_custom_unique<CustomAllocator<int>>(custom_int_allocator_copy, 1500);
     std::cout << *ptr1 << " " << *ptr2 << " " << *ptr3 << " " << *ptr4 << " ";
     
     CustomAllocator<float> custom_float_allocator { custom_int_allocator };
