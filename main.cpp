@@ -122,40 +122,64 @@ namespace details
             }
                 
             m_free_blocks.insert(reinterpret_cast<std::uint32_t*>(header_address));
+            auto forward_it = m_free_blocks.find(reinterpret_cast<std::uint32_t*>(header_address));
+            auto backward_it = defragment(forward_it, m_free_blocks.end());
+            defragment(std::make_reverse_iterator(backward_it), m_free_blocks.rend());
+        }
+    private:
+        template<typename DstIterator, typename SrcIterator>
+        constexpr DstIterator getIterator(SrcIterator it) const
+        {
+            using iterator = std::set<std::uint32_t*>::iterator;
+            using reverse_iterator = std::set<std::uint32_t*>::reverse_iterator;
+            if constexpr ( (std::is_same_v<SrcIterator, iterator>) && (std::is_same_v<DstIterator, reverse_iterator>) )
+            {
+                return std::make_reverse_iterator(it);
+            }
+            else if constexpr ( (std::is_same_v<SrcIterator, reverse_iterator>) && (std::is_same_v<DstIterator, iterator>) )
+            {
+                return it.base();
+            }
+            else
+            {
+                return it;
+            }
         }
         
-        void defragment()
+        template<typename Iterator>
+        Iterator defragment(Iterator start, Iterator end)
         {
             // primitive defragmentation algorithm - connects two neighboring
             // free blocks into one with linear complexity
-            
-            std::uint32_t* prev_header_address = nullptr;
-            for (auto it = m_free_blocks.begin(); it != m_free_blocks.end();)
+   
+            auto fixed_it = start++;
+            std::uint32_t* prev_header_address = *fixed_it;
+            for (auto it = start; (fixed_it != end) && (it != end);)
             {
                 std::uint32_t* current_header_address = *it;
-                if (prev_header_address)
+                const std::uint32_t prev_block_size = *prev_header_address;
+                const std::uint32_t* available_current_block_address =
+                    reinterpret_cast<std::uint32_t*>(reinterpret_cast<std::uint8_t*>(prev_header_address) + HEADER_SIZE + prev_block_size);
+                if (available_current_block_address == current_header_address)
                 {
-                    const std::uint32_t prev_block_size = *prev_header_address;
-                    const std::uint32_t* available_current_block_address =
-                        reinterpret_cast<std::uint32_t*>(reinterpret_cast<std::uint8_t*>(prev_header_address) + HEADER_SIZE + prev_block_size);
-                    if (available_current_block_address == current_header_address)
+                    const std::uint32_t current_block_size = *current_header_address;
+                    const std::uint32_t new_prev_block_size = prev_block_size + HEADER_SIZE + current_block_size;
+                    *prev_header_address = new_prev_block_size;
+                    if (new_prev_block_size > *m_max_block)
                     {
-                        const std::uint32_t current_block_size = *current_header_address;
-                        const std::uint32_t new_prev_block_size = prev_block_size + HEADER_SIZE + current_block_size;
-                        *prev_header_address = new_prev_block_size;
-                        if (new_prev_block_size > *m_max_block)
-                        {
-                            m_max_block = reinterpret_cast<std::uint32_t*>(prev_header_address);
-                        }
-                            
-                        it = m_free_blocks.erase(it);
-                        continue;
+                        m_max_block = reinterpret_cast<std::uint32_t*>(prev_header_address);
                     }
+                            
+                    auto it_for_delete = getIterator<std::set<std::uint32_t*>::iterator>(it);
+                    it = getIterator<Iterator>(m_free_blocks.erase(it_for_delete));
                 }
-                
-                prev_header_address = current_header_address;
-                ++it;
+                else
+                {
+                    return fixed_it;
+                }
             }
+            
+            return fixed_it;
         }
     public:
         std::vector<std::uint8_t*> m_blocks;
@@ -219,7 +243,6 @@ public:
             if (chunk.isInside(deallocation_ptr))
             {
                 chunk.releaseBlock(deallocation_ptr);
-                chunk.defragment(); // defragmentation runs with every deallocation operations
             }
         }
     }
